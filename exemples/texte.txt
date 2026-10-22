@@ -1,0 +1,117 @@
+LA COMPRESSION DE DONNÉES : UNE PETITE HISTOIRE
+================================================
+
+1. Pourquoi compresser ?
+
+Un fichier informatique n'est qu'une suite d'octets. Dans un texte écrit en
+français, ces octets ne sont pas répartis au hasard : la lettre « e » est
+beaucoup plus fréquente que la lettre « w », l'espace revient à chaque mot,
+et des mots entiers comme « le », « la », « de », « des » ou « compression »
+reviennent sans cesse. Compresser, c'est exploiter cette redondance pour
+écrire la même information avec moins d'octets.
+
+On distingue deux grandes familles de compression. La compression sans perte
+permet de retrouver le fichier original à l'identique : c'est indispensable
+pour un texte, un programme ou une archive. La compression avec perte accepte
+de modifier légèrement les données : c'est le cas des formats JPEG pour les
+photographies ou MP3 pour la musique. MiniZip, comme WinRAR et 7-Zip, fait
+uniquement de la compression sans perte.
+
+2. Claude Shannon et l'entropie
+
+En 1948, Claude Shannon publie « A Mathematical Theory of Communication ».
+Il y définit l'entropie d'une source d'information : c'est le nombre moyen
+de bits strictement nécessaire pour coder un symbole. Si une source émet des
+symboles avec les probabilités p1, p2, ..., pn, son entropie vaut
+H = - (p1 log2 p1 + p2 log2 p2 + ... + pn log2 pn).
+Aucune méthode de compression sans perte ne peut descendre en dessous de
+cette limite. Toute l'histoire de la compression est une course pour s'en
+approcher le plus possible.
+
+3. Le codage de Huffman
+
+En 1952, David Huffman propose une méthode simple et élégante : on attribue
+un code court aux symboles fréquents et un code long aux symboles rares. Le
+code de Huffman est optimal parmi les codes qui utilisent un nombre entier de
+bits par symbole. Mais cette contrainte du nombre entier de bits est aussi
+sa limite : un symbole très fréquent coûte au moins un bit, même si sa
+probabilité est de 99 %.
+
+4. Le codage arithmétique
+
+Le codage arithmétique, développé à partir de 1976 notamment par Jorma
+Rissanen et Richard Pasco, puis rendu populaire en 1987 par Ian Witten,
+Radford Neal et John Cleary, lève cette limite. L'idée est surprenante : au
+lieu de coder chaque symbole séparément, on code le message entier par un
+seul nombre compris entre 0 et 1.
+
+On part de l'intervalle [0 ; 1). Chaque symbole possède une part de cet
+intervalle proportionnelle à sa probabilité. Pour coder le premier symbole,
+on se place dans sa part ; pour coder le deuxième symbole, on découpe cette
+part de la même manière et on se place dans la sous-part du deuxième
+symbole ; et ainsi de suite. À la fin, l'intervalle est minuscule, et
+n'importe quel nombre de cet intervalle représente le message entier. Plus
+un symbole est probable, moins il réduit l'intervalle, et moins il coûte de
+bits. Le codage arithmétique peut ainsi dépenser une fraction de bit par
+symbole et s'approcher de très près de l'entropie de Shannon.
+
+Le décodeur fait le chemin inverse : il regarde dans quelle part de
+l'intervalle tombe le nombre reçu, en déduit le premier symbole, agrandit
+cette part pour qu'elle redevienne l'intervalle [0 ; 1), et recommence.
+
+5. Lempel, Ziv et le dictionnaire
+
+En 1977, Abraham Lempel et Jacob Ziv publient « A Universal Algorithm for
+Sequential Data Compression ». Leur méthode, appelée LZ77, ne s'intéresse
+pas à la probabilité des symboles isolés mais aux répétitions. Le
+compresseur garde en mémoire une fenêtre des derniers octets déjà lus, que
+l'on appelle le tampon de recherche, et regarde les octets suivants, que
+l'on appelle le tampon de lecture. Si le début du tampon de lecture se
+trouve déjà dans le tampon de recherche, il suffit d'écrire « recule de tant
+de positions et copie tant d'octets ». Chaque étape produit un triplet :
+décalage, longueur et caractère suivant.
+
+Dans un texte, les répétitions sont partout : la fin d'un mot, une
+terminaison de verbe, un mot déjà vu deux lignes plus haut, une indentation.
+Dans une image non compressée, une zone de couleur unie est une suite de
+pixels identiques : LZ77 la remplace par quelques triplets seulement.
+
+6. Les archiveurs modernes
+
+Les grands formats d'archives combinent les deux idées. Le format ZIP et la
+bibliothèque zlib, utilisés aussi par le format d'image PNG, enchaînent une
+variante de LZ77 et un codage de Huffman. Le logiciel WinRAR, créé par
+Eugene Roshal, utilise son propre format RAR. Le logiciel 7-Zip, créé par
+Igor Pavlov, utilise l'algorithme LZMA : un dictionnaire de type LZ77, suivi
+d'un codeur par intervalles, qui est une forme de codage arithmétique.
+
+MiniZip reprend exactement ce schéma, en version pédagogique : d'abord LZ77
+pour supprimer les répétitions, ensuite le codage arithmétique pour coder au
+plus juste les triplets produits. Le premier étage exploite la redondance à
+longue distance, le second exploite la fréquence des symboles.
+
+7. Ce que la compression ne peut pas faire
+
+Un fichier déjà compressé, comme une image PNG, une photographie JPEG ou une
+archive ZIP, ne contient presque plus de redondance : ses octets ressemblent
+à du hasard. Le compresser une seconde fois ne fait rien gagner, et le
+fichier peut même grossir à cause de l'en-tête. C'est pourquoi les
+archiveurs, quand ils ne gagnent rien, se contentent de stocker le fichier
+tel quel. MiniZip fait de même : sa méthode « stocké » recopie simplement
+les octets après l'en-tête.
+
+De la même manière, il est impossible de compresser tous les fichiers : il
+y a moins de fichiers courts que de fichiers longs, donc une méthode qui
+raccourcirait tous les fichiers devrait forcément en confondre deux. La
+compression sans perte ne fonctionne que parce que les fichiers réels ne
+sont pas aléatoires.
+
+8. Conclusion
+
+La compression de données est un bel exemple de rencontre entre les
+mathématiques et l'informatique : les probabilités et l'entropie fixent la
+limite, les algorithmes comme LZ77 et le codage arithmétique permettent de
+s'en approcher, et les logiciels comme WinRAR ou 7-Zip les rendent
+utilisables par tous. Comprendre ces algorithmes, c'est comprendre pourquoi
+un fichier texte se compresse très bien, pourquoi une photographie se
+compresse mal, et pourquoi aucune méthode ne peut tout compresser.

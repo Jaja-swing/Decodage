@@ -1,0 +1,200 @@
+"""
+main.py — Interface console de MiniZip.
+
+    python main.py                                   → menu interactif
+    python main.py compresser FICHIER [-o SORTIE]    → crée FICHIER.mz
+    python main.py decompresser ARCHIVE [-o DOSSIER] → restaure le fichier
+    python main.py info ARCHIVE                      → affiche l'en-tête du .mz
+    python main.py demo                              → exemples des deux documents
+"""
+
+import argparse
+import sys
+import time
+
+import arithmetique
+import format_fichier as ff
+import lz77
+import pipeline
+
+MENU = """
+==================================================
+  MiniZip — compression LZ77 + codage arithmétique
+==================================================
+  1. Compresser un fichier
+  2. Décompresser un fichier .mz
+  3. Afficher les informations d'un fichier .mz
+  4. Exemple du cours : codage arithmétique (CALCU)
+  5. Exemple du cours : LZ77 (CABRACADABRARRARRAD)
+  0. Quitter"""
+
+
+# ---------------------------------------------------------------------------
+# Petits outils d'affichage
+# ---------------------------------------------------------------------------
+
+def octets(n):
+    return f"{n:,}".replace(",", " ") + " octets"
+
+
+def pourcent(partie, total):
+    return f"{100 * partie / total:.1f} %" if total else "—"
+
+
+def symbole_en_texte(nom_flux, s):
+    """Valeur de l'octet, suivie du caractère correspondant s'il est imprimable."""
+    if nom_flux == "caractère" and 32 <= s < 127:
+        return f"{s} {chr(s)!r}"
+    return str(s)
+
+
+def demander(question):
+    reponse = input(question).strip()
+    if not sys.stdin.isatty():
+        print(reponse)          # entrée redirigée : on garde un journal lisible
+    return reponse
+
+
+def demander_chemin(question):
+    """Comme demander(), en retirant les guillemets d'un chemin glissé-déposé."""
+    return demander(question).strip("\"'")
+
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+
+def executer_compression(chemin, chemin_sortie=None):
+    print(f"Compression de « {chemin} »…")
+    r = pipeline.compresser_fichier(chemin, chemin_sortie,
+                                    journal=lambda message: print(f"  … {message}"))
+    print()
+    if r.nb_triplets:
+        print("  Flux                       Symboles  Distincts  Entropie   Shannon    Table     Codé")
+        for f in r.flux:
+            print(f"  {f.nom:<25} {f.nb_symboles:>9} {f.nb_distincts:>10}"
+                  f"  {f.entropie:4.2f} b/s {f.limite_shannon:>7.0f} o {f.taille_table:>6} o {f.taille_codee:>6} o")
+        print()
+    brut = 4 * r.nb_triplets
+    print(f"  Taille originale      : {octets(r.taille_originale)}")
+    print(f"  Après LZ77 (brut)     : {r.nb_triplets} triplets × 4 octets = {octets(brut)}"
+          f" ({pourcent(brut, r.taille_originale)})")
+    print(f"  Méthode retenue       : {ff.NOMS_METHODES[r.methode]}")
+    print(f"  Fichier .mz           : {octets(r.taille_compressee)} (dont en-tête : {r.taille_entete} o)")
+    if r.taux <= 1:
+        print(f"  Taux de compression   : {100 * r.taux:.1f} %  → gain de {100 * (1 - r.taux):.1f} %")
+    else:
+        print(f"  Taux de compression   : {100 * r.taux:.1f} %  → le fichier grossit de "
+              f"{octets(r.taille_compressee - r.taille_originale)} (en-tête)")
+    print(f"  Durée                 : {r.duree:.2f} s")
+    print(f"  Archive créée         : {r.chemin_sortie}")
+
+
+def executer_decompression(chemin_mz, dossier=None):
+    print(f"Décompression de « {chemin_mz} »…")
+    debut = time.perf_counter()
+    chemin, en_tete = pipeline.decompresser_fichier(chemin_mz, dossier)
+    duree = time.perf_counter() - debut
+    print(f"  Fichier restauré      : {chemin} ({octets(en_tete.taille_originale)})")
+    print(f"  Contrôle d'intégrité  : taille et CRC-32 ({en_tete.crc32:08X}) conformes ✓")
+    print(f"  Durée                 : {duree:.2f} s")
+
+
+def executer_info(chemin_mz):
+    en_tete, flux, taille = pipeline.lire_infos(chemin_mz)
+    print(f"Fichier « {chemin_mz} »")
+    print(f"  Format             : MZIP version {ff.VERSION}")
+    print(f"  Nom d'origine      : {en_tete.nom}")
+    print(f"  Taille originale   : {octets(en_tete.taille_originale)}")
+    print(f"  Taille .mz         : {octets(taille)} ({pourcent(taille, en_tete.taille_originale)})")
+    print(f"  CRC-32             : {en_tete.crc32:08X}")
+    print(f"  Méthode            : {ff.NOMS_METHODES[en_tete.methode]}")
+    if en_tete.methode != ff.METHODE_LZ77_ARITH:
+        return
+    print(f"  LZ77               : fenêtre {en_tete.taille_recherche}, anticipation "
+          f"{en_tete.taille_anticipation}, {en_tete.nb_triplets} triplets")
+    print(f"  Arithmétique       : blocs de {en_tete.taille_bloc} symboles")
+    print("  Tables de fréquences :")
+    for nom_flux, frequences, taille_codee in flux:
+        plus_frequents = sorted(frequences.items(), key=lambda item: -item[1])[:5]
+        apercu = ", ".join(f"{symbole_en_texte(nom_flux, s)}×{n}" for s, n in plus_frequents)
+        print(f"    {nom_flux:<24} {len(frequences):>3} symboles, {taille_codee:>6} o codés"
+              f"  | plus fréquents : {apercu}")
+
+
+def menu():
+    def compresser():
+        executer_compression(demander_chemin("Fichier à compresser : "))
+
+    def decompresser():
+        chemin = demander_chemin("Fichier .mz à décompresser : ")
+        dossier = demander_chemin("Dossier de sortie (Entrée = « extrait » à côté de l'archive) : ")
+        executer_decompression(chemin, dossier or None)
+
+    def info():
+        executer_info(demander_chemin("Fichier .mz : "))
+
+    actions = {"1": compresser, "2": decompresser, "3": info,
+               "4": arithmetique.demo, "5": lz77.demo}
+    while True:
+        print(MENU)
+        choix = demander("Votre choix : ")
+        if choix == "0":
+            print("Au revoir !")
+            return
+        if choix not in actions:
+            print("Choix invalide.")
+            continue
+        print()
+        try:
+            actions[choix]()
+        except (OSError, ValueError, ff.FormatInvalide) as erreur:
+            print(f"Erreur : {erreur}")
+
+
+# ---------------------------------------------------------------------------
+# Point d'entrée
+# ---------------------------------------------------------------------------
+
+def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")   # accents et indices, même sous Windows
+
+    parser = argparse.ArgumentParser(
+        prog="minizip", description="MiniZip : compression LZ77 + codage arithmétique.")
+    commandes = parser.add_subparsers(dest="commande")
+    p = commandes.add_parser("compresser", help="compresser un fichier en .mz")
+    p.add_argument("fichier")
+    p.add_argument("-o", "--sortie", help="chemin du .mz (défaut : FICHIER.mz)")
+    p = commandes.add_parser("decompresser", help="décompresser un fichier .mz")
+    p.add_argument("archive")
+    p.add_argument("-o", "--dossier", help="dossier de sortie (défaut : « extrait » à côté de l'archive)")
+    p = commandes.add_parser("info", help="afficher l'en-tête et les tables d'un .mz")
+    p.add_argument("archive")
+    commandes.add_parser("demo", help="exemples CALCU et CABRACADABRARRARRAD")
+    args = parser.parse_args(argv)
+
+    try:
+        if args.commande is None:
+            menu()
+        elif args.commande == "compresser":
+            executer_compression(args.fichier, args.sortie)
+        elif args.commande == "decompresser":
+            executer_decompression(args.archive, args.dossier)
+        elif args.commande == "info":
+            executer_info(args.archive)
+        elif args.commande == "demo":
+            arithmetique.demo()
+            print()
+            lz77.demo()
+    except (OSError, ValueError, ff.FormatInvalide) as erreur:
+        print(f"Erreur : {erreur}", file=sys.stderr)
+        return 1
+    except (EOFError, KeyboardInterrupt):
+        print("\nInterrompu.")
+        return 130
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
